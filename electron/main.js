@@ -6,6 +6,7 @@ const {
   registerMediaProtocol,
 } = require('./mediaProtocol')
 const { runExport } = require('./exportEngine')
+const { extractFrame } = require('./thumbnails')
 
 const isDev = process.env.NODE_ENV === 'development'
 const DEV_SERVER_URL = 'http://localhost:5173'
@@ -112,6 +113,11 @@ ipcMain.handle('export:start', async (event, payload) => {
 // or an error string (per Electron's shell.openPath contract).
 ipcMain.handle('shell:openPath', async (_evt, targetPath) => {
   return shell.openPath(targetPath)
+})
+
+// Extract a single video frame (data URL) for filmstrip / clip thumbnails.
+ipcMain.handle('thumb:extract', async (_evt, filePath, time, width) => {
+  return extractFrame(filePath, time, width)
 })
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listDramas: (rootPath) => ipcRenderer.invoke('fs:listDramas', rootPath),
   ensureDir: (dirPath) => ipcRenderer.invoke('fs:ensureDir', dirPath),
 
+  // Thumbnails — extract a frame (data URL) at a timestamp via ffmpeg.
+  extractThumbnail: (filePath, time, width) =>
+    ipcRenderer.invoke('thumb:extract', filePath, time, width),
+
   // Export
   startExport: (payload) => ipcRenderer.invoke('export:start', payload),
   openPath: (targetPath) => ipcRenderer.invoke('shell:openPath', targetPath),

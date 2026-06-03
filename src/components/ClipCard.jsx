@@ -1,83 +1,29 @@
 import { useEffect, useState } from 'react'
 import { formatMMSS } from '../utils/time.js'
-import { toMediaUrl } from '../utils/media.js'
 import { PlayIcon, TrashIcon } from './Icons.jsx'
 
 const THUMB_W = 80
 const THUMB_H = 45
 
-// Extracts a single frame at `inTime` from the video at `src` and draws it to a
-// canvas. Runs once per (src, inTime); on any failure shows a dark placeholder.
-function ClipThumbnail({ src, inTime }) {
+// Extract the frame at `inTime` via ffmpeg in the main process (robust for any
+// codec; no canvas tainting). Shows a dark placeholder until ready / on failure.
+function ClipThumbnail({ sourcePath, inTime }) {
   const [dataUrl, setDataUrl] = useState(null)
 
   useEffect(() => {
-    if (!src) return
-    let done = false
-    const video = document.createElement('video')
-    video.crossOrigin = 'anonymous' // pair with CORS headers so canvas isn't tainted
-    video.muted = true
-    video.preload = 'auto'
-
-    const timer = setTimeout(() => finish(null), 6000)
-
-    function cleanup() {
-      clearTimeout(timer)
-      video.removeEventListener('loadeddata', onLoaded)
-      video.removeEventListener('seeked', onSeeked)
-      video.removeEventListener('error', onError)
-      try {
-        video.removeAttribute('src')
-        video.load()
-      } catch {
-        /* ignore */
-      }
-    }
-
-    function finish(url) {
-      if (done) return
-      done = true
-      cleanup()
-      if (url) setDataUrl(url)
-    }
-
-    function draw() {
-      try {
-        const canvas = document.createElement('canvas')
-        canvas.width = THUMB_W
-        canvas.height = THUMB_H
-        canvas.getContext('2d').drawImage(video, 0, 0, THUMB_W, THUMB_H)
-        finish(canvas.toDataURL('image/jpeg', 0.6))
-      } catch {
-        finish(null) // tainted canvas / decode error → placeholder
-      }
-    }
-
-    function onLoaded() {
-      const dur = video.duration || inTime || 0
-      const t = Math.max(0, Math.min(inTime || 0, Math.max(0, dur - 0.05)))
-      if (Math.abs(video.currentTime - t) < 0.05) draw()
-      else {
-        try {
-          video.currentTime = t
-        } catch {
-          finish(null)
-        }
-      }
-    }
-    const onSeeked = () => draw()
-    const onError = () => finish(null)
-
-    video.addEventListener('loadeddata', onLoaded)
-    video.addEventListener('seeked', onSeeked)
-    video.addEventListener('error', onError)
-    video.src = src
-
+    let cancelled = false
+    setDataUrl(null)
+    if (!sourcePath) return
+    window.electronAPI
+      .extractThumbnail(sourcePath, inTime, THUMB_W)
+      .then((url) => {
+        if (!cancelled) setDataUrl(url)
+      })
+      .catch(() => {})
     return () => {
-      done = true
-      cleanup()
+      cancelled = true
     }
-  }, [src, inTime])
+  }, [sourcePath, inTime])
 
   return dataUrl ? (
     <img
@@ -117,7 +63,6 @@ export default function ClipCard({
   const [newSub, setNewSub] = useState('')
 
   const duration = Math.max(0, clip.out - clip.in)
-  const thumbSrc = toMediaUrl(clip.sourcePath)
 
   function commitNewSub() {
     onAddSubfolder(clip.id, newSub)
@@ -153,7 +98,7 @@ export default function ClipCard({
 
       {/* Thumbnail + info */}
       <div className="flex gap-2">
-        <ClipThumbnail src={thumbSrc} inTime={clip.in} />
+        <ClipThumbnail sourcePath={clip.sourcePath} inTime={clip.in} />
         <div className="min-w-0 flex-1">
           <p className="text-[13px] font-medium tabular-nums">{formatMMSS(duration)}</p>
           <p className="mt-0.5 truncate text-[11px] text-[#666] tabular-nums">

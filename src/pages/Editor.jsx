@@ -568,7 +568,6 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
         outPoint={outPoint}
         clips={clips}
         episodePath={episodePath}
-        videoSrc={videoSrc}
         onScrub={scrubTo}
       />
 

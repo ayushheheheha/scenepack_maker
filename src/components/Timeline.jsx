@@ -9,97 +9,49 @@ const ZOOM_BTN =
   'grid h-6 w-6 cursor-pointer place-items-center rounded border border-[#444] bg-[#111]/90 text-[15px] leading-none text-white transition-colors hover:bg-[#1a1a1a] disabled:cursor-not-allowed disabled:opacity-40'
 
 // Generate an evenly-spaced set of frame thumbnails for the filmstrip. Frames
-// are sampled once per video (independent of zoom) and tiled across the bar.
-function useFilmstrip(src, duration) {
+// are extracted by ffmpeg in the main process (robust for any codec, no canvas
+// tainting) once per video — independent of zoom — and tiled across the bar.
+const FILMSTRIP_CONCURRENCY = 4
+
+function useFilmstrip(sourcePath, duration) {
   const [urls, setUrls] = useState([])
   useEffect(() => {
     setUrls([])
-    if (!src || !(duration > 0)) return
-    const count = Math.min(FILMSTRIP_MAX, Math.max(8, Math.round(duration / 1.5)))
+    if (!sourcePath || !(duration > 0)) return
+    const count = Math.min(FILMSTRIP_MAX, Math.max(10, Math.round(duration / 2)))
     const times = Array.from({ length: count }, (_, i) =>
-      Math.min(Math.max(duration - 0.05, 0), ((i + 0.5) * duration) / count)
+      Math.min(Math.max(duration - 0.1, 0), ((i + 0.5) * duration) / count)
     )
     setUrls(new Array(count).fill(null))
 
     let cancelled = false
-    let i = 0
-    let ready = false
-    let settled = false
-    let watchdog = null
-    const video = document.createElement('video')
-    video.crossOrigin = 'anonymous' // pair with CORS headers so canvas isn't tainted
-    video.muted = true
-    video.preload = 'auto'
-    const canvas = document.createElement('canvas')
-    canvas.width = 160
-    canvas.height = 90
-    const ctx = canvas.getContext('2d')
-
-    const cleanup = () => {
-      clearTimeout(watchdog)
-      video.removeEventListener('loadeddata', onLoaded)
-      video.removeEventListener('seeked', onSeeked)
-      video.removeEventListener('error', onError)
-      try {
-        video.removeAttribute('src')
-        video.load()
-      } catch {
-        /* ignore */
+    let next = 0
+    const worker = async () => {
+      while (!cancelled) {
+        const i = next++
+        if (i >= count) return
+        let url = null
+        try {
+          url = await window.electronAPI.extractThumbnail(sourcePath, times[i])
+        } catch {
+          url = null
+        }
+        if (cancelled) return
+        setUrls((prev) => {
+          if (i >= prev.length) return prev
+          const copy = prev.slice()
+          copy[i] = url
+          return copy
+        })
       }
     }
-    const settle = (url) => {
-      if (cancelled || settled) return
-      settled = true
-      clearTimeout(watchdog)
-      const idx = i
-      setUrls((prev) => {
-        if (idx >= prev.length) return prev
-        const copy = prev.slice()
-        copy[idx] = url
-        return copy
-      })
-      i += 1
-      seekNext()
-    }
-    const seekNext = () => {
-      if (cancelled || i >= count) return cleanup()
-      settled = false
-      clearTimeout(watchdog)
-      watchdog = setTimeout(() => settle(null), 4000)
-      try {
-        video.currentTime = times[i]
-      } catch {
-        settle(null)
-      }
-    }
-    const onSeeked = () => {
-      let url = null
-      try {
-        ctx.drawImage(video, 0, 0, 160, 90)
-        url = canvas.toDataURL('image/jpeg', 0.5)
-      } catch {
-        url = null
-      }
-      settle(url)
-    }
-    const onLoaded = () => {
-      if (!ready) {
-        ready = true
-        seekNext()
-      }
-    }
-    const onError = () => settle(null)
-
-    video.addEventListener('loadeddata', onLoaded)
-    video.addEventListener('seeked', onSeeked)
-    video.addEventListener('error', onError)
-    video.src = src
+    // A few workers in parallel so the strip fills quickly.
+    for (let w = 0; w < FILMSTRIP_CONCURRENCY; w++) worker()
 
     return () => {
       cancelled = true
-      cleanup()
     }
-  }, [src, duration])
+  }, [sourcePath, duration])
   return urls
 }
 
@@ -111,7 +63,6 @@ export default function Timeline({
   outPoint,
   clips,
   episodePath,
-  videoSrc,
   onScrub,
 }) {
   const viewportRef = useRef(null)
@@ -124,7 +75,7 @@ export default function Timeline({
   const [scrollLeft, setScrollLeft] = useState(0)
   const lastFitDurRef = useRef(-1)
 
-  const frames = useFilmstrip(videoSrc, duration)
+  const frames = useFilmstrip(episodePath, duration)
 
   // Measure the viewport width.
   useEffect(() => {
@@ -184,7 +135,7 @@ export default function Timeline({
 
   const fitPx = duration > 0 && viewportW > 0 ? viewportW / duration : 0
   const effPx = pxPerSec || fitPx
-  const hasVideo = !!videoSrc && duration > 0 && effPx > 0
+  const hasVideo = !!episodePath && duration > 0 && effPx > 0
   const contentWidth = hasVideo ? duration * effPx : viewportW || 0
   const count = frames.length
   const cellPxW = count > 0 && contentWidth > 0 ? contentWidth / count : 0
