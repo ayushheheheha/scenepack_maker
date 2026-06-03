@@ -1,10 +1,17 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs/promises')
+const {
+  registerMediaSchemePrivileged,
+  registerMediaProtocol,
+} = require('./mediaProtocol')
 
 const isDev = process.env.NODE_ENV === 'development'
 const DEV_SERVER_URL = 'http://localhost:5173'
 const PROJECT_FILE = 'project.json'
+
+// Declare the media:// scheme as privileged BEFORE app 'ready'.
+registerMediaSchemePrivileged()
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -92,6 +99,7 @@ ipcMain.handle('fs:ensureDir', async (_evt, dirPath) => {
 // ---------------------------------------------------------------------------
 
 app.whenReady().then(() => {
+  registerMediaProtocol()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
