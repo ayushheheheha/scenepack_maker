@@ -43,7 +43,10 @@ async function handleMediaRequest(request) {
   try {
     info = await stat(filePath)
   } catch {
-    return new Response('Not found', { status: 404 })
+    return new Response('Not found', {
+      status: 404,
+      headers: { 'Access-Control-Allow-Origin': '*' },
+    })
   }
 
   const total = info.size
@@ -59,7 +62,11 @@ async function handleMediaRequest(request) {
     if (start > end || start >= total) {
       return new Response(null, {
         status: 416,
-        headers: { 'Content-Range': `bytes */${total}`, 'Accept-Ranges': 'bytes' },
+        headers: {
+          'Content-Range': `bytes */${total}`,
+          'Accept-Ranges': 'bytes',
+          'Access-Control-Allow-Origin': '*',
+        },
       })
     }
     const chunkSize = end - start + 1
@@ -71,6 +78,9 @@ async function handleMediaRequest(request) {
         'Content-Length': String(chunkSize),
         'Content-Range': `bytes ${start}-${end}/${total}`,
         'Accept-Ranges': 'bytes',
+        // CORS so the renderer can read frames into a canvas (thumbnails)
+        // without tainting it. The video element must set crossOrigin too.
+        'Access-Control-Allow-Origin': '*',
       },
     })
   }
@@ -82,6 +92,7 @@ async function handleMediaRequest(request) {
       'Content-Type': type,
       'Content-Length': String(total),
       'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
     },
   })
 }

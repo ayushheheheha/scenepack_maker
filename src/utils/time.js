@@ -20,6 +20,20 @@ export function formatTimecode(seconds, fps = DEFAULT_FPS) {
 }
 
 /**
+ * Zero-padded MM:SS (used for clip durations and time ranges). Minutes are not
+ * capped, so a 75-minute clip reads 75:00.
+ * @param {number} seconds
+ */
+export function formatMMSS(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0
+  const total = Math.floor(seconds)
+  const ss = total % 60
+  const mm = Math.floor(total / 60)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(mm)}:${pad(ss)}`
+}
+
+/**
  * Compact clock label for timeline ticks: M:SS, or H:MM:SS past an hour.
  * @param {number} seconds
  */

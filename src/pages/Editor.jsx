@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatTimecode, formatClock, DEFAULT_FPS } from '../utils/time.js'
-import {
-  ArrowLeftIcon,
-  PlayIcon,
-  PauseIcon,
-} from '../components/Icons.jsx'
+import { toMediaUrl } from '../utils/media.js'
+import { ArrowLeftIcon, PlayIcon, PauseIcon } from '../components/Icons.jsx'
+import ClipCard from '../components/ClipCard.jsx'
 
 const FPS = DEFAULT_FPS
 const FRAME = 1 / FPS
@@ -15,16 +13,12 @@ const CTRL_BTN =
 const ICON_BTN =
   'grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-md border border-[#444] bg-transparent text-white transition-colors hover:bg-[#1a1a1a] disabled:cursor-not-allowed disabled:opacity-40'
 
-// Local files can't be loaded via file:// from the http dev origin, so route
-// them through the media:// scheme registered in electron/main.js.
-function toMediaUrl(filePath) {
-  return `media://local/${encodeURIComponent(filePath)}`
-}
-
 const clampPct = (p) => Math.min(100, Math.max(0, p))
 
-export default function Editor({ project, onBack }) {
+export default function Editor({ project, projectPath, setProject, onBack }) {
+  // Video player state (Phase 3)
   const [videoSrc, setVideoSrc] = useState('')
+  const [episodePath, setEpisodePath] = useState('') // absolute file path of loaded video
   const [episodeName, setEpisodeName] = useState('')
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
@@ -34,14 +28,39 @@ export default function Editor({ project, onBack }) {
   const [volume, setVolume] = useState(1)
   const [playbackRate, setPlaybackRate] = useState(1)
 
+  // Clip workspace state (Phase 4) — seeded from the loaded project (load-on-open)
+  const [clips, setClips] = useState(() => project?.clips ?? [])
+  const [subfolders, setSubfolders] = useState(() => project?.subfolders ?? [])
+  const [clipError, setClipError] = useState('')
+
   const videoRef = useRef(null)
   const trackRef = useRef(null)
+  const playUntilRef = useRef(null) // stop playback at this time (clip preview)
+  const pendingPlayRef = useRef(null) // {in,out} to play once a new src loads
+
+  // --- persistence: write project.json and sync lifted state ---
+  function persist(nextClips, nextSubfolders) {
+    const base = project ?? {
+      drama: 'Untitled',
+      createdAt: new Date().toISOString(),
+      subfolders: [],
+      clips: [],
+    }
+    const updated = { ...base, subfolders: nextSubfolders, clips: nextClips }
+    if (typeof setProject === 'function') setProject(updated)
+    if (projectPath) {
+      window.electronAPI
+        .writeProject(projectPath, updated)
+        .catch((e) => console.error('Failed to save project.json', e))
+    }
+  }
 
   // --- video actions (read live values off the element to stay closure-safe) ---
 
   function togglePlay() {
     const v = videoRef.current
     if (!v || !v.currentSrc) return
+    playUntilRef.current = null // manual control cancels clip-preview auto-stop
     if (v.paused) v.play().catch(() => {})
     else v.pause()
   }
@@ -49,6 +68,7 @@ export default function Editor({ project, onBack }) {
   function seek(t) {
     const v = videoRef.current
     if (!v || Number.isNaN(v.duration)) return
+    playUntilRef.current = null
     const clamped = Math.min(v.duration, Math.max(0, t))
     v.currentTime = clamped
     setCurrentTime(clamped)
@@ -87,7 +107,10 @@ export default function Editor({ project, onBack }) {
     })
     if (!filePath) return
     const base = filePath.split(/[\\/]/).pop() || ''
+    playUntilRef.current = null
+    pendingPlayRef.current = null
     setEpisodeName(base.replace(/\.[^.]+$/, ''))
+    setEpisodePath(filePath)
     setInPoint(null)
     setOutPoint(null)
     setCurrentTime(0)
@@ -108,51 +131,130 @@ export default function Editor({ project, onBack }) {
     if (videoRef.current) videoRef.current.playbackRate = val
   }
 
+  function startRangePlayback(inT, outT) {
+    const v = videoRef.current
+    if (!v) return
+    playUntilRef.current = outT
+    const t = Math.max(0, Math.min(inT, v.duration || inT))
+    v.currentTime = t
+    setCurrentTime(t)
+    v.play().catch(() => {})
+  }
+
   function handleLoadedMetadata() {
     const v = videoRef.current
     if (!v) return
     setDuration(v.duration)
     v.volume = volume
     v.playbackRate = playbackRate
-  }
-
-  // --- scrubber seeking (click + drag) ---
-
-  function seekToClientX(clientX) {
-    const el = trackRef.current
-    const v = videoRef.current
-    if (!el || !v || !v.duration) return
-    const rect = el.getBoundingClientRect()
-    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
-    seek(frac * v.duration)
-  }
-
-  function handleTrackMouseDown(e) {
-    if (!videoSrc) return
-    seekToClientX(e.clientX)
-    const move = (ev) => seekToClientX(ev.clientX)
-    const up = () => {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
+    if (pendingPlayRef.current) {
+      const { in: inT, out: outT } = pendingPlayRef.current
+      pendingPlayRef.current = null
+      startRangePlayback(inT, outT)
     }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
   }
 
-  // --- smooth playhead while playing ---
+  // --- clip actions (Phase 4) ---
+
+  function addClip() {
+    if (inPoint == null || outPoint == null) {
+      setClipError('Set in and out points first')
+      return
+    }
+    setClipError('')
+    const lo = Math.min(inPoint, outPoint)
+    const hi = Math.max(inPoint, outPoint)
+    const clip = {
+      id: `clip_${Date.now()}`,
+      episode: episodeName,
+      sourcePath: episodePath, // absolute file path (schema: "absolute path")
+      in: lo,
+      out: hi,
+      folders: [],
+      label: '',
+    }
+    const next = [...clips, clip]
+    setClips(next)
+    setInPoint(null)
+    setOutPoint(null)
+    persist(next, subfolders)
+  }
+
+  function deleteClip(id) {
+    const next = clips.filter((c) => c.id !== id)
+    setClips(next)
+    persist(next, subfolders)
+  }
+
+  function toggleClipFolder(clipId, folderName) {
+    const next = clips.map((c) => {
+      if (c.id !== clipId) return c
+      const has = c.folders.includes(folderName)
+      return {
+        ...c,
+        folders: has
+          ? c.folders.filter((f) => f !== folderName)
+          : [...c.folders, folderName],
+      }
+    })
+    setClips(next)
+    persist(next, subfolders)
+  }
+
+  function setClipLabel(clipId, label) {
+    const next = clips.map((c) => (c.id === clipId ? { ...c, label } : c))
+    setClips(next)
+    persist(next, subfolders)
+  }
+
+  function addSubfolderForClip(clipId, rawName) {
+    const name = rawName.trim()
+    if (!name) return
+    const nextSubs = subfolders.includes(name) ? subfolders : [...subfolders, name]
+    const nextClips = clips.map((c) => {
+      if (c.id !== clipId) return c
+      return c.folders.includes(name) ? c : { ...c, folders: [...c.folders, name] }
+    })
+    setSubfolders(nextSubs)
+    setClips(nextClips)
+    persist(nextClips, nextSubs)
+  }
+
+  function playClip(clip) {
+    // If the clip belongs to a different source than what's loaded, load it
+    // first and play the range once metadata is ready.
+    if (clip.sourcePath && clip.sourcePath !== episodePath) {
+      pendingPlayRef.current = { in: clip.in, out: clip.out }
+      setEpisodeName(clip.episode || '')
+      setEpisodePath(clip.sourcePath)
+      setCurrentTime(0)
+      setDuration(0)
+      setVideoSrc(toMediaUrl(clip.sourcePath))
+      return
+    }
+    startRangePlayback(clip.in, clip.out)
+  }
+
+  // --- smooth playhead + clip-preview auto-stop ---
   useEffect(() => {
     if (!isPlaying) return
     let raf = 0
     const loop = () => {
       const v = videoRef.current
-      if (v) setCurrentTime(v.currentTime)
+      if (v) {
+        setCurrentTime(v.currentTime)
+        if (playUntilRef.current != null && v.currentTime >= playUntilRef.current) {
+          v.pause()
+          playUntilRef.current = null
+        }
+      }
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
   }, [isPlaying])
 
-  // --- keyboard shortcuts (window-level, mount/unmount) ---
+  // --- keyboard shortcuts (window-level) ---
   useEffect(() => {
     function onKey(e) {
       const tag = e.target?.tagName
@@ -205,6 +307,15 @@ export default function Editor({ project, onBack }) {
   if (hasDuration) {
     for (let t = 10; t < duration; t += 10) ticks.push(t)
   }
+  // Clip boundary ticks — only for clips belonging to the loaded video.
+  const clipTicks = []
+  if (hasDuration) {
+    for (const c of clips) {
+      if (!c.sourcePath || c.sourcePath !== episodePath) continue
+      clipTicks.push({ key: `${c.id}-in`, pct: clampPct((c.in / duration) * 100) })
+      clipTicks.push({ key: `${c.id}-out`, pct: clampPct((c.out / duration) * 100) })
+    }
+  }
   const showRegion =
     hasDuration && inPoint != null && outPoint != null && outPoint > inPoint
   const regionStyle = showRegion
@@ -232,7 +343,7 @@ export default function Editor({ project, onBack }) {
         <div className="w-8 shrink-0" />
       </div>
 
-      {/* Middle: video (left) + clips placeholder (right) */}
+      {/* Middle: video (left) + clip workspace (right) */}
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Video area */}
@@ -353,9 +464,41 @@ export default function Editor({ project, onBack }) {
           </div>
         </div>
 
-        {/* Right panel — reserved for clips (Phase 4) */}
-        <div className="flex w-80 shrink-0 items-center justify-center border-l border-border bg-surface">
-          <p className="text-[13px] text-[#666]">Clips will appear here</p>
+        {/* Right panel — clip workspace */}
+        <div className="flex w-80 shrink-0 flex-col border-l border-border bg-surface">
+          <div className="border-b border-border p-3">
+            <button
+              onClick={(e) => {
+                e.currentTarget.blur()
+                addClip()
+              }}
+              className="inline-flex h-9 w-full cursor-pointer items-center justify-center rounded-md bg-white text-[13px] font-medium text-black transition-colors hover:bg-white/90"
+            >
+              Add Clip
+            </button>
+            {clipError && (
+              <p className="mt-2 text-center text-[12px] text-red-400">{clipError}</p>
+            )}
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+            {clips.length === 0 ? (
+              <p className="mt-6 text-center text-[12px] text-[#666]">No clips yet</p>
+            ) : (
+              clips.map((clip) => (
+                <ClipCard
+                  key={clip.id}
+                  clip={clip}
+                  subfolders={subfolders}
+                  onPlay={playClip}
+                  onDelete={deleteClip}
+                  onToggleFolder={toggleClipFolder}
+                  onLabelChange={setClipLabel}
+                  onAddSubfolder={addSubfolderForClip}
+                />
+              ))
+            )}
+          </div>
         </div>
       </div>
 
@@ -363,7 +506,25 @@ export default function Editor({ project, onBack }) {
       <div className="h-20 shrink-0 border-t border-border bg-surface px-4 py-3">
         <div
           ref={trackRef}
-          onMouseDown={handleTrackMouseDown}
+          onMouseDown={(e) => {
+            if (!videoSrc) return
+            const el = trackRef.current
+            const v = videoRef.current
+            if (!el || !v || !v.duration) return
+            const rect = el.getBoundingClientRect()
+            const at = (clientX) => {
+              const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+              seek(frac * v.duration)
+            }
+            at(e.clientX)
+            const move = (ev) => at(ev.clientX)
+            const up = () => {
+              window.removeEventListener('mousemove', move)
+              window.removeEventListener('mouseup', up)
+            }
+            window.addEventListener('mousemove', move)
+            window.addEventListener('mouseup', up)
+          }}
           className={`relative h-full w-full overflow-hidden rounded-sm bg-[#161616] ${
             videoSrc ? 'cursor-pointer' : 'cursor-default'
           }`}
@@ -385,6 +546,15 @@ export default function Editor({ project, onBack }) {
                 {formatClock(t)}
               </div>
             </div>
+          ))}
+
+          {/* Clip boundary ticks (saved clips on this video) */}
+          {clipTicks.map(({ key, pct }) => (
+            <div
+              key={key}
+              className="pointer-events-none absolute top-0 h-2.5 w-px bg-amber-400"
+              style={{ left: `${pct}%` }}
+            />
           ))}
 
           {/* In marker */}

@@ -14,6 +14,7 @@ export default function App() {
       <Editor
         project={project}
         projectPath={projectPath}
+        setProject={setProject}
         onBack={() => setView('home')}
       />
     )
