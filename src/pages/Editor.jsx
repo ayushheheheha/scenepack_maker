@@ -3,6 +3,7 @@ import { formatTimecode, formatClock, DEFAULT_FPS } from '../utils/time.js'
 import { toMediaUrl } from '../utils/media.js'
 import { ArrowLeftIcon, PlayIcon, PauseIcon } from '../components/Icons.jsx'
 import ClipCard from '../components/ClipCard.jsx'
+import ExportPanel from '../components/ExportPanel.jsx'
 
 const FPS = DEFAULT_FPS
 const FRAME = 1 / FPS
@@ -32,6 +33,7 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
   const [clips, setClips] = useState(() => project?.clips ?? [])
   const [subfolders, setSubfolders] = useState(() => project?.subfolders ?? [])
   const [clipError, setClipError] = useState('')
+  const [showExport, setShowExport] = useState(false)
 
   const videoRef = useRef(null)
   const trackRef = useRef(null)
@@ -220,6 +222,15 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
     persist(nextClips, nextSubs)
   }
 
+  // Mark exported clips and persist (called after a successful export).
+  function markExported(exportedIds) {
+    if (!Array.isArray(exportedIds) || exportedIds.length === 0) return
+    const set = new Set(exportedIds)
+    const next = clips.map((c) => (set.has(c.id) ? { ...c, exported: true } : c))
+    setClips(next)
+    persist(next, subfolders)
+  }
+
   function playClip(clip) {
     // If the clip belongs to a different source than what's loaded, load it
     // first and play the range once metadata is ready.
@@ -326,7 +337,7 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
     : null
 
   return (
-    <div className="flex h-screen w-full select-none flex-col overflow-hidden bg-bg text-white">
+    <div className="relative flex h-screen w-full select-none flex-col overflow-hidden bg-bg text-white">
       {/* Top bar */}
       <div className="flex h-12 shrink-0 items-center border-b border-border px-3">
         <button
@@ -340,7 +351,15 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
           <span className="text-white/80">{project?.drama ?? 'Untitled'}</span>
           {episodeName && <span className="text-[#666]"> · {episodeName}</span>}
         </div>
-        <div className="w-8 shrink-0" />
+        <button
+          onClick={(e) => {
+            e.currentTarget.blur()
+            setShowExport(true)
+          }}
+          className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md bg-white px-3 text-[12px] font-medium text-black transition-colors hover:bg-white/90"
+        >
+          Export
+        </button>
       </div>
 
       {/* Middle: video (left) + clip workspace (right) */}
@@ -590,6 +609,17 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
           )}
         </div>
       </div>
+
+      {showExport && (
+        <ExportPanel
+          dramaName={project?.drama ?? 'Untitled'}
+          clips={clips}
+          subfolders={subfolders}
+          defaultOutputDir={projectPath}
+          onClose={() => setShowExport(false)}
+          onExported={markExported}
+        />
+      )}
     </div>
   )
 }

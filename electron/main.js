@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs/promises')
 const {
   registerMediaSchemePrivileged,
   registerMediaProtocol,
 } = require('./mediaProtocol')
+const { runExport } = require('./exportEngine')
 
 const isDev = process.env.NODE_ENV === 'development'
 const DEV_SERVER_URL = 'http://localhost:5173'
@@ -92,6 +93,25 @@ ipcMain.handle('fs:listDramas', async (_evt, rootPath) => {
 ipcMain.handle('fs:ensureDir', async (_evt, dirPath) => {
   await fs.mkdir(dirPath, { recursive: true })
   return dirPath
+})
+
+// ---------------------------------------------------------------------------
+// IPC: export + shell
+// ---------------------------------------------------------------------------
+
+// Run the export, streaming progress to the renderer that invoked it.
+// payload: { clips, subfolders, outputDir, dramaName }
+// returns: { success, errors[], exportedIds[], done, total }
+ipcMain.handle('export:start', async (event, payload) => {
+  return runExport(payload, (progress) => {
+    event.sender.send('export:progress', progress)
+  })
+})
+
+// Open a path (folder/file) in the OS file manager. Returns '' on success,
+// or an error string (per Electron's shell.openPath contract).
+ipcMain.handle('shell:openPath', async (_evt, targetPath) => {
+  return shell.openPath(targetPath)
 })
 
 // ---------------------------------------------------------------------------

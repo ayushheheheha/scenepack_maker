@@ -14,4 +14,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('fs:writeProject', folderPath, project),
   listDramas: (rootPath) => ipcRenderer.invoke('fs:listDramas', rootPath),
   ensureDir: (dirPath) => ipcRenderer.invoke('fs:ensureDir', dirPath),
+
+  // Export
+  startExport: (payload) => ipcRenderer.invoke('export:start', payload),
+  openPath: (targetPath) => ipcRenderer.invoke('shell:openPath', targetPath),
+  // Subscribe to export progress; returns an unsubscribe function.
+  onExportProgress: (callback) => {
+    const listener = (_evt, data) => callback(data)
+    ipcRenderer.on('export:progress', listener)
+    return () => ipcRenderer.removeListener('export:progress', listener)
+  },
 })
