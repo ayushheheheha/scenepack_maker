@@ -10,6 +10,14 @@ Built with Electron + React + Vite + Tailwind, with a flat, Vercel-inspired dark
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-v3-38BDF8?logo=tailwindcss&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
+## ⬇️ Download
+
+### **[Download for Windows — installer (.exe)](https://github.com/ayushheheheha/scenepack_maker/releases/latest)**
+
+Grab the latest `ScenePack Maker Setup <version>.exe` from the [**Releases** page](https://github.com/ayushheheheha/scenepack_maker/releases/latest), then run it to install.
+
+> The app is **unsigned**, so Windows SmartScreen may show "Windows protected your PC" — click **More info → Run anyway**. Prefer to build it yourself? See [Building a distributable](#building-a-distributable).
+
 <!-- Add screenshots here, e.g. ![Editor](docs/editor.png) -->
 
 ## Features
@@ -65,6 +73,8 @@ Output lands in `release/`. On Windows you get:
 
 - `release/ScenePack Maker Setup <version>.exe` — the NSIS installer to share.
 - `release/win-unpacked/` — a portable, already-unpacked build.
+
+To make the **Download** link above work, create a [GitHub Release](https://github.com/ayushheheheha/scenepack_maker/releases/new) and upload the `ScenePack Maker Setup <version>.exe` as a release asset.
 
 > **Cross-platform:** you can only build the Windows installer on Windows, the macOS `.dmg` on macOS, and the Linux `AppImage` on Linux (or use CI to build all three). Targets are configured in [`electron-builder.config.js`](electron-builder.config.js).
 
