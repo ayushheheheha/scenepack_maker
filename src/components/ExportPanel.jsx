@@ -83,7 +83,7 @@ export default function ExportPanel({
   const errorCount = result?.errors?.length || 0
 
   return (
-    <aside className="absolute bottom-20 right-0 top-12 z-20 flex w-80 flex-col border-l border-border bg-surface">
+    <aside className="absolute bottom-24 right-0 top-12 z-20 flex w-80 flex-col border-l border-border bg-surface">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border p-3">
         <h2 className="text-[14px] font-medium">Export scenepack</h2>

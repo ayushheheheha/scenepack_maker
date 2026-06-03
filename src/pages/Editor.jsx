@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatTimecode, formatClock, DEFAULT_FPS } from '../utils/time.js'
+import { formatTimecode, DEFAULT_FPS } from '../utils/time.js'
 import { toMediaUrl } from '../utils/media.js'
 import { ArrowLeftIcon, PlayIcon, PauseIcon } from '../components/Icons.jsx'
 import ClipCard from '../components/ClipCard.jsx'
 import ExportPanel from '../components/ExportPanel.jsx'
+import Timeline from '../components/Timeline.jsx'
 
 const FPS = DEFAULT_FPS
 const FRAME = 1 / FPS
@@ -13,8 +14,6 @@ const CTRL_BTN =
   'inline-flex h-8 cursor-pointer items-center justify-center rounded-md border border-[#444] bg-transparent px-2.5 text-[12px] text-white transition-colors hover:bg-[#1a1a1a] disabled:cursor-not-allowed disabled:opacity-40'
 const ICON_BTN =
   'grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-md border border-[#444] bg-transparent text-white transition-colors hover:bg-[#1a1a1a] disabled:cursor-not-allowed disabled:opacity-40'
-
-const clampPct = (p) => Math.min(100, Math.max(0, p))
 
 export default function Editor({ project, projectPath, setProject, onBack }) {
   // Video player state (Phase 3)
@@ -36,9 +35,9 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
   const [showExport, setShowExport] = useState(false)
 
   const videoRef = useRef(null)
-  const trackRef = useRef(null)
   const playUntilRef = useRef(null) // stop playback at this time (clip preview)
   const pendingPlayRef = useRef(null) // {in,out} to play once a new src loads
+  const pendingSeekRef = useRef(null) // latest scrub target (coalesces in-flight seeks)
 
   // --- persistence: write project.json and sync lifted state ---
   function persist(nextClips, nextSubfolders) {
@@ -74,6 +73,31 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
     const clamped = Math.min(v.duration, Math.max(0, t))
     v.currentTime = clamped
     setCurrentTime(clamped)
+  }
+
+  // Live scrubbing from the timeline: move the playhead immediately and seek
+  // to the latest target as fast as the decoder allows (coalesce in-flight
+  // seeks so the preview updates live while dragging, not only on release).
+  function scrubTo(time) {
+    const v = videoRef.current
+    if (!v || Number.isNaN(v.duration)) return
+    playUntilRef.current = null
+    const t = Math.min(v.duration, Math.max(0, time))
+    setCurrentTime(t)
+    pendingSeekRef.current = t
+    if (!v.seeking) v.currentTime = t
+  }
+
+  function handleSeeked() {
+    const v = videoRef.current
+    if (!v) return
+    const target = pendingSeekRef.current
+    if (target == null) return
+    if (Math.abs(target - v.currentTime) > 0.04) {
+      if (!v.seeking) v.currentTime = target
+    } else {
+      pendingSeekRef.current = null
+    }
   }
 
   function stepFrames(n) {
@@ -246,6 +270,26 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
     startRangePlayback(clip.in, clip.out)
   }
 
+  // Rename the current episode. Also relabels existing clips cut from this
+  // source so their exported filenames use the new prefix.
+  function commitEpisodeName() {
+    const name = episodeName.trim()
+    if (name !== episodeName) setEpisodeName(name)
+    if (!episodePath) return
+    let changed = false
+    const next = clips.map((c) => {
+      if (c.sourcePath === episodePath && c.episode !== name) {
+        changed = true
+        return { ...c, episode: name }
+      }
+      return c
+    })
+    if (changed) {
+      setClips(next)
+      persist(next, subfolders)
+    }
+  }
+
   // --- smooth playhead + clip-preview auto-stop ---
   useEffect(() => {
     if (!isPlaying) return
@@ -312,30 +356,6 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // --- timeline geometry ---
-  const hasDuration = duration > 0 && Number.isFinite(duration)
-  const ticks = []
-  if (hasDuration) {
-    for (let t = 10; t < duration; t += 10) ticks.push(t)
-  }
-  // Clip boundary ticks — only for clips belonging to the loaded video.
-  const clipTicks = []
-  if (hasDuration) {
-    for (const c of clips) {
-      if (!c.sourcePath || c.sourcePath !== episodePath) continue
-      clipTicks.push({ key: `${c.id}-in`, pct: clampPct((c.in / duration) * 100) })
-      clipTicks.push({ key: `${c.id}-out`, pct: clampPct((c.out / duration) * 100) })
-    }
-  }
-  const showRegion =
-    hasDuration && inPoint != null && outPoint != null && outPoint > inPoint
-  const regionStyle = showRegion
-    ? {
-        left: `${clampPct((inPoint / duration) * 100)}%`,
-        width: `${clampPct(((outPoint - inPoint) / duration) * 100)}%`,
-      }
-    : null
-
   return (
     <div className="relative flex h-screen w-full select-none flex-col overflow-hidden bg-bg text-white">
       {/* Top bar */}
@@ -347,9 +367,26 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
         >
           <ArrowLeftIcon size={18} />
         </button>
-        <div className="flex-1 truncate text-center text-[13px]">
-          <span className="text-white/80">{project?.drama ?? 'Untitled'}</span>
-          {episodeName && <span className="text-[#666]"> · {episodeName}</span>}
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-2 text-[13px]">
+          <span className="max-w-[40%] truncate text-white/80">
+            {project?.drama ?? 'Untitled'}
+          </span>
+          {episodePath && (
+            <>
+              <span className="text-[#666]">·</span>
+              <input
+                value={episodeName}
+                onChange={(e) => setEpisodeName(e.target.value)}
+                onBlur={commitEpisodeName}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                }}
+                placeholder="episode name"
+                title="Episode name — used as the export filename prefix (e.g. episode 1_001.mp4)"
+                className="w-52 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[13px] text-[#aaa] outline-none transition-colors placeholder:text-[#555] hover:border-[#333] focus:border-[#444] focus:text-white"
+              />
+            </>
+          )}
         </div>
         <button
           onClick={(e) => {
@@ -375,6 +412,7 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
                 className="max-h-full max-w-full object-contain"
                 onLoadedMetadata={handleLoadedMetadata}
                 onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+                onSeeked={handleSeeked}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => setIsPlaying(false)}
@@ -521,94 +559,18 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
         </div>
       </div>
 
-      {/* Bottom bar — timeline scrubber */}
-      <div className="h-20 shrink-0 border-t border-border bg-surface px-4 py-3">
-        <div
-          ref={trackRef}
-          onMouseDown={(e) => {
-            if (!videoSrc) return
-            const el = trackRef.current
-            const v = videoRef.current
-            if (!el || !v || !v.duration) return
-            const rect = el.getBoundingClientRect()
-            const at = (clientX) => {
-              const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
-              seek(frac * v.duration)
-            }
-            at(e.clientX)
-            const move = (ev) => at(ev.clientX)
-            const up = () => {
-              window.removeEventListener('mousemove', move)
-              window.removeEventListener('mouseup', up)
-            }
-            window.addEventListener('mousemove', move)
-            window.addEventListener('mouseup', up)
-          }}
-          className={`relative h-full w-full overflow-hidden rounded-sm bg-[#161616] ${
-            videoSrc ? 'cursor-pointer' : 'cursor-default'
-          }`}
-        >
-          {/* In/out region */}
-          {regionStyle && (
-            <div className="pointer-events-none absolute inset-y-0 bg-white/10" style={regionStyle} />
-          )}
-
-          {/* Ticks every 10s */}
-          {ticks.map((t) => (
-            <div
-              key={t}
-              className="pointer-events-none absolute inset-y-0"
-              style={{ left: `${(t / duration) * 100}%` }}
-            >
-              <div className="absolute bottom-3.5 h-2 w-px bg-[#333]" />
-              <div className="absolute bottom-0.5 -translate-x-1/2 text-[9px] leading-none text-[#555]">
-                {formatClock(t)}
-              </div>
-            </div>
-          ))}
-
-          {/* Clip boundary ticks (saved clips on this video) */}
-          {clipTicks.map(({ key, pct }) => (
-            <div
-              key={key}
-              className="pointer-events-none absolute top-0 h-2.5 w-px bg-amber-400"
-              style={{ left: `${pct}%` }}
-            />
-          ))}
-
-          {/* In marker */}
-          {inPoint != null && hasDuration && (
-            <div
-              className="pointer-events-none absolute inset-y-0 w-0.5 bg-green-500"
-              style={{ left: `${clampPct((inPoint / duration) * 100)}%` }}
-            >
-              <span className="absolute left-1 top-0.5 text-[9px] font-medium text-green-500">
-                IN
-              </span>
-            </div>
-          )}
-
-          {/* Out marker */}
-          {outPoint != null && hasDuration && (
-            <div
-              className="pointer-events-none absolute inset-y-0 w-0.5 bg-red-500"
-              style={{ left: `${clampPct((outPoint / duration) * 100)}%` }}
-            >
-              <span className="absolute right-1 top-0.5 text-[9px] font-medium text-red-500">
-                OUT
-              </span>
-            </div>
-          )}
-
-          {/* Playhead */}
-          {hasDuration && (
-            <div
-              className="pointer-events-none absolute inset-y-0 w-0.5 bg-white"
-              style={{ left: `${clampPct((currentTime / duration) * 100)}%` }}
-            />
-          )}
-        </div>
-      </div>
+      {/* Bottom bar — timeline scrubber (filmstrip + zoom) */}
+      <Timeline
+        duration={duration}
+        currentTime={currentTime}
+        isPlaying={isPlaying}
+        inPoint={inPoint}
+        outPoint={outPoint}
+        clips={clips}
+        episodePath={episodePath}
+        videoSrc={videoSrc}
+        onScrub={scrubTo}
+      />
 
       {showExport && (
         <ExportPanel

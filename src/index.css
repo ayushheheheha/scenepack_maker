@@ -21,3 +21,18 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+
+/* Thin dark horizontal scrollbar for the zoomable timeline. */
+.timeline-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+.timeline-scroll::-webkit-scrollbar-thumb {
+  background-color: #333;
+  border-radius: 9999px;
+}
+.timeline-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #444;
+}
+.timeline-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
