@@ -3,9 +3,29 @@ import Home from './pages/Home.jsx'
 import Editor from './pages/Editor.jsx'
 
 export default function App() {
-  // Phase 1: a single state variable picks the view. No router yet —
-  // navigation between Home and Editor is wired up in a later phase.
-  const [view] = useState('home')
+  // Phase 2: a single view variable picks the screen. The loaded project is
+  // lifted here so it can be handed to the Editor. No router yet.
+  const [view, setView] = useState('home')
+  const [project, setProject] = useState(null) // parsed project.json, or null
+  const [projectPath, setProjectPath] = useState(null) // folder holding project.json
 
-  return view === 'editor' ? <Editor /> : <Home />
+  if (view === 'editor') {
+    return (
+      <Editor
+        project={project}
+        projectPath={projectPath}
+        onBack={() => setView('home')}
+      />
+    )
+  }
+
+  return (
+    <Home
+      project={project}
+      projectPath={projectPath}
+      setProject={setProject}
+      setProjectPath={setProjectPath}
+      onOpenEditor={() => setView('editor')}
+    />
+  )
 }
