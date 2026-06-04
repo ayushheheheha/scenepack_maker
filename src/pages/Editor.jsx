@@ -81,14 +81,14 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
   const pendingSeekRef = useRef(null) // latest scrub target (coalesces in-flight seeks)
 
   // --- persistence: write project.json and sync lifted state ---
-  function persist(nextClips, nextSubfolders) {
+  function persist(nextClips, nextSubfolders, extra = {}) {
     const base = project ?? {
       drama: 'Untitled',
       createdAt: new Date().toISOString(),
       subfolders: [],
       clips: [],
     }
-    const updated = { ...base, subfolders: nextSubfolders, clips: nextClips }
+    const updated = { ...base, ...extra, subfolders: nextSubfolders, clips: nextClips }
     if (typeof setProject === 'function') setProject(updated)
     if (projectPath) {
       window.electronAPI
@@ -288,14 +288,16 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
   }
 
   // Mark exported clips and persist (called after a successful export).
-  function markExported(exportedIds) {
-    if (!Array.isArray(exportedIds) || exportedIds.length === 0) return
+  // `res` is the export result: { exportedIds, dramaDir, ... }.
+  function markExported(res) {
+    const exportedIds = res?.exportedIds || []
     const set = new Set(exportedIds)
     const next = clips.map((c) => (set.has(c.id) ? { ...c, exported: true } : c))
     setClips(next)
     setSelectedIds(new Set())
-    setClipTab('exported') // surface the results
-    persist(next, subfolders)
+    if (exportedIds.length) setClipTab('exported') // surface the results
+    // Remember where the files landed so the MEGA uploader knows the folder.
+    persist(next, subfolders, res?.dramaDir ? { exportDir: res.dramaDir } : {})
   }
 
   // Open the Export panel for a specific set of clips.

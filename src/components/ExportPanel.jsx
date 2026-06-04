@@ -69,8 +69,8 @@ export default function ExportPanel({
       setResult(res)
       setElapsed((Date.now() - startRef.current) / 1000)
       setPhase('done')
-      if (res?.exportedIds?.length && typeof onExported === 'function') {
-        onExported(res.exportedIds)
+      if (res && typeof onExported === 'function') {
+        onExported(res) // full result: { exportedIds, dramaDir, ... }
       }
     } catch (e) {
       setFatalError(e?.message || String(e))

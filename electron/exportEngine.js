@@ -73,6 +73,7 @@ async function runExport(payload, onProgress) {
   const isTarget = (clip) => targetSet === null || targetSet.has(clip.id)
 
   const dramaSeg = sanitizeSegment(dramaName, 'drama')
+  const dramaDir = path.join(outputDir, dramaSeg) // exported root for this drama
 
   // Build the task list (so we know the total before processing). Numbering
   // resets per episode within each subfolder.
@@ -131,7 +132,14 @@ async function runExport(payload, onProgress) {
     onProgress?.({ done, total, currentFile: task.filename })
   }
 
-  return { success: errors.length === 0, errors, exportedIds: [...exportedIds], done, total }
+  return {
+    success: errors.length === 0,
+    errors,
+    exportedIds: [...exportedIds],
+    done,
+    total,
+    dramaDir, // where the files were written (used by the MEGA uploader)
+  }
 }
 
 module.exports = { runExport, sanitizeSegment }

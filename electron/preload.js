@@ -19,6 +19,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extractThumbnail: (filePath, time, width) =>
     ipcRenderer.invoke('thumb:extract', filePath, time, width),
 
+  // MEGA accounts + incremental upload
+  mega: {
+    list: () => ipcRenderer.invoke('mega:listAccounts'),
+    add: (account) => ipcRenderer.invoke('mega:addAccount', account),
+    remove: (id) => ipcRenderer.invoke('mega:removeAccount', id),
+    makeActive: (id, code) => ipcRenderer.invoke('mega:makeActive', id, code),
+    scanUploads: (payload) => ipcRenderer.invoke('mega:scanUploads', payload),
+    uploadDrama: (payload) => ipcRenderer.invoke('mega:uploadDrama', payload),
+    onUploadProgress: (callback) => {
+      const listener = (_evt, data) => callback(data)
+      ipcRenderer.on('mega:uploadProgress', listener)
+      return () => ipcRenderer.removeListener('mega:uploadProgress', listener)
+    },
+  },
+
   // Export
   startExport: (payload) => ipcRenderer.invoke('export:start', payload),
   openPath: (targetPath) => ipcRenderer.invoke('shell:openPath', targetPath),

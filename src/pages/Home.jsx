@@ -6,6 +6,8 @@ import {
   isValidProject,
 } from '../utils/projectIO.js'
 import { PlusIcon, TrashIcon, FolderIcon } from '../components/Icons.jsx'
+import MegaDashboard from '../components/MegaDashboard.jsx'
+import MegaUploadPanel from '../components/MegaUploadPanel.jsx'
 
 // Shared button styles. transition-colors is the only allowed transition.
 const PRIMARY_BTN =
@@ -20,17 +22,31 @@ export default function Home({
   setProjectPath,
   onOpenEditor,
 }) {
+  const [showMega, setShowMega] = useState(false)
+
   // STATE 1 vs STATE 2 is derived purely from whether a project is loaded.
-  if (!project) {
-    return <Landing setProject={setProject} setProjectPath={setProjectPath} />
-  }
   return (
-    <DramaManager
-      project={project}
-      projectPath={projectPath}
-      setProject={setProject}
-      onOpenEditor={onOpenEditor}
-    />
+    <div className="relative h-full w-full">
+      {project ? (
+        <DramaManager
+          project={project}
+          projectPath={projectPath}
+          setProject={setProject}
+          onOpenEditor={onOpenEditor}
+        />
+      ) : (
+        <Landing setProject={setProject} setProjectPath={setProjectPath} />
+      )}
+
+      <button
+        onClick={() => setShowMega(true)}
+        className="absolute right-4 top-4 z-30 inline-flex h-8 cursor-pointer items-center rounded-md border border-[#444] bg-bg/80 px-3 text-[12px] text-white transition-colors hover:bg-[#1a1a1a]"
+      >
+        MEGA
+      </button>
+
+      {showMega && <MegaDashboard onClose={() => setShowMega(false)} />}
+    </div>
   )
 }
 
@@ -153,6 +169,7 @@ function Landing({ setProject, setProjectPath }) {
 function DramaManager({ project, projectPath, setProject, onOpenEditor }) {
   const [adding, setAdding] = useState(false)
   const [newSubfolder, setNewSubfolder] = useState('')
+  const [showUpload, setShowUpload] = useState(false)
 
   // Persist immediately on every change, and reflect it in lifted state.
   async function persist(updated) {
@@ -162,6 +179,14 @@ function DramaManager({ project, projectPath, setProject, onOpenEditor }) {
     } catch (e) {
       console.error('Failed to persist project.json', e)
     }
+  }
+
+  // Save the per-account upload manifest back into project.json.
+  function saveUploadManifest(accountId, manifest) {
+    persist({
+      ...project,
+      uploads: { ...(project.uploads || {}), [accountId]: manifest },
+    })
   }
 
   function addSubfolder() {
@@ -248,12 +273,26 @@ function DramaManager({ project, projectPath, setProject, onOpenEditor }) {
           )}
         </div>
 
-        <div className="border-t border-border p-3">
+        <div className="space-y-2 border-t border-border p-3">
           <button onClick={onOpenEditor} className={`w-full ${PRIMARY_BTN}`}>
             Open in Editor
           </button>
+          <button
+            onClick={() => setShowUpload(true)}
+            className={`w-full ${SECONDARY_BTN}`}
+          >
+            Upload to MEGA
+          </button>
         </div>
       </aside>
+
+      {showUpload && (
+        <MegaUploadPanel
+          project={project}
+          onClose={() => setShowUpload(false)}
+          onManifestUpdate={saveUploadManifest}
+        />
+      )}
 
       {/* Main content */}
       <main className="flex flex-1 flex-col overflow-y-auto p-8">

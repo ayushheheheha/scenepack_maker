@@ -7,6 +7,8 @@ const {
 } = require('./mediaProtocol')
 const { runExport } = require('./exportEngine')
 const { extractFrame } = require('./thumbnails')
+const megaAccounts = require('./megaAccounts')
+const megaUpload = require('./megaUpload')
 
 const isDev = process.env.NODE_ENV === 'development'
 const DEV_SERVER_URL = 'http://localhost:5173'
@@ -118,6 +120,23 @@ ipcMain.handle('shell:openPath', async (_evt, targetPath) => {
 // Extract a single video frame (data URL) for filmstrip / clip thumbnails.
 ipcMain.handle('thumb:extract', async (_evt, filePath, time, width) => {
   return extractFrame(filePath, time, width)
+})
+
+// ---------------------------------------------------------------------------
+// IPC: MEGA accounts
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('mega:listAccounts', async () => megaAccounts.listAccounts())
+ipcMain.handle('mega:addAccount', async (_evt, account) => megaAccounts.addAccount(account))
+ipcMain.handle('mega:removeAccount', async (_evt, id) => megaAccounts.removeAccount(id))
+ipcMain.handle('mega:makeActive', async (_evt, id, code) => megaAccounts.makeActive(id, code))
+
+// Incremental upload: scan (dry-run) and upload (streams progress back).
+ipcMain.handle('mega:scanUploads', async (_evt, payload) => megaUpload.scanUploads(payload))
+ipcMain.handle('mega:uploadDrama', async (event, payload) => {
+  return megaUpload.uploadDrama(payload, (progress) => {
+    event.sender.send('mega:uploadProgress', progress)
+  })
 })
 
 // ---------------------------------------------------------------------------
