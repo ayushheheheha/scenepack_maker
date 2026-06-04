@@ -10,9 +10,11 @@ const SECONDARY_SM =
 
 export default function ExportPanel({
   dramaName,
-  clips,
+  clips, // the clips to actually export (drives the preview)
+  allClips, // full project clip set — used for stable per-episode numbering
   subfolders,
   defaultOutputDir,
+  width = 320,
   onClose,
   onExported,
 }) {
@@ -58,10 +60,11 @@ export default function ExportPanel({
     setPhase('running')
     try {
       const res = await window.electronAPI.startExport({
-        clips,
+        clips: allClips ?? clips, // full set for numbering context
         subfolders,
         outputDir,
         dramaName,
+        exportIds: clips.map((c) => c.id), // only cut the targeted clips
       })
       setResult(res)
       setElapsed((Date.now() - startRef.current) / 1000)
@@ -83,7 +86,10 @@ export default function ExportPanel({
   const errorCount = result?.errors?.length || 0
 
   return (
-    <aside className="absolute bottom-24 right-0 top-12 z-20 flex w-80 flex-col border-l border-border bg-surface">
+    <aside
+      className="absolute bottom-24 right-0 top-12 z-20 flex flex-col border-l border-border bg-surface"
+      style={{ width }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border p-3">
         <h2 className="text-[14px] font-medium">Export scenepack</h2>

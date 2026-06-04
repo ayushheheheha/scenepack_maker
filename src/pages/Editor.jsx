@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatTimecode, DEFAULT_FPS } from '../utils/time.js'
 import { toMediaUrl } from '../utils/media.js'
-import { ArrowLeftIcon, PlayIcon, PauseIcon } from '../components/Icons.jsx'
+import { ArrowLeftIcon, PlayIcon, PauseIcon, ChevronRightIcon } from '../components/Icons.jsx'
 import ClipCard from '../components/ClipCard.jsx'
 import ExportPanel from '../components/ExportPanel.jsx'
 import Timeline from '../components/Timeline.jsx'
@@ -33,6 +33,47 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
   const [subfolders, setSubfolders] = useState(() => project?.subfolders ?? [])
   const [clipError, setClipError] = useState('')
   const [showExport, setShowExport] = useState(false)
+  const [exportTargets, setExportTargets] = useState([]) // clips the open Export panel will cut
+  const [selectedIds, setSelectedIds] = useState(() => new Set()) // selected exported clips
+  const [clipTab, setClipTab] = useState('pending') // 'pending' | 'exported'
+  const [expandedEpisodes, setExpandedEpisodes] = useState(() => new Set()) // open episode groups
+
+  // Resizable clip panel width (persisted).
+  const MIN_PANEL = 280
+  const [panelWidth, setPanelWidth] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem('scp.clipPanelWidth'))
+      return saved >= MIN_PANEL ? saved : 360
+    } catch {
+      return 360
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('scp.clipPanelWidth', String(panelWidth))
+    } catch {
+      /* ignore */
+    }
+  }, [panelWidth])
+
+  function startResize(e) {
+    e.preventDefault()
+    const onMove = (ev) => {
+      const maxW = window.innerWidth - 420 // keep room for the video side
+      const w = window.innerWidth - ev.clientX
+      setPanelWidth(Math.max(MIN_PANEL, Math.min(maxW, w)))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   const videoRef = useRef(null)
   const playUntilRef = useRef(null) // stop playback at this time (clip preview)
@@ -252,7 +293,34 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
     const set = new Set(exportedIds)
     const next = clips.map((c) => (set.has(c.id) ? { ...c, exported: true } : c))
     setClips(next)
+    setSelectedIds(new Set())
+    setClipTab('exported') // surface the results
     persist(next, subfolders)
+  }
+
+  // Open the Export panel for a specific set of clips.
+  function openExport(targets) {
+    if (!targets || targets.length === 0) return
+    setExportTargets(targets)
+    setShowExport(true)
+  }
+
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleEpisode(ep) {
+    setExpandedEpisodes((prev) => {
+      const next = new Set(prev)
+      if (next.has(ep)) next.delete(ep)
+      else next.add(ep)
+      return next
+    })
   }
 
   function playClip(clip) {
@@ -356,6 +424,30 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Clip sections: pending (not yet exported) vs already exported.
+  const pendingClips = clips.filter((c) => !c.exported)
+  const exportedClips = clips.filter((c) => c.exported)
+  const selectedCount = exportedClips.filter((c) => selectedIds.has(c.id)).length
+  const allExportedSelected = exportedClips.length > 0 && selectedCount === exportedClips.length
+  function toggleSelectAll() {
+    setSelectedIds(
+      allExportedSelected ? new Set() : new Set(exportedClips.map((c) => c.id))
+    )
+  }
+
+  // Group exported clips by episode (for the collapsible dropdowns).
+  const exportedGroups = (() => {
+    const map = new Map()
+    for (const c of exportedClips) {
+      const ep = c.episode || 'episode'
+      if (!map.has(ep)) map.set(ep, [])
+      map.get(ep).push(c)
+    }
+    return [...map.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+      .map(([episode, items]) => ({ episode, items }))
+  })()
+
   return (
     <div className="relative flex h-screen w-full select-none flex-col overflow-hidden bg-bg text-white">
       {/* Top bar */}
@@ -391,11 +483,17 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
         <button
           onClick={(e) => {
             e.currentTarget.blur()
-            setShowExport(true)
+            openExport(pendingClips)
           }}
-          className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md bg-white px-3 text-[12px] font-medium text-black transition-colors hover:bg-white/90"
+          disabled={pendingClips.length === 0}
+          title={
+            pendingClips.length === 0
+              ? 'No new clips to export'
+              : `Export ${pendingClips.length} new clip(s)`
+          }
+          className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md bg-white px-3 text-[12px] font-medium text-black transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Export
+          Export{pendingClips.length > 0 ? ` (${pendingClips.length})` : ''}
         </button>
       </div>
 
@@ -521,8 +619,18 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
           </div>
         </div>
 
-        {/* Right panel — clip workspace */}
-        <div className="flex w-80 shrink-0 flex-col border-l border-border bg-surface">
+        {/* Drag handle — resize video vs. clip panel */}
+        <div
+          onMouseDown={startResize}
+          title="Drag to resize"
+          className="w-1.5 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-[#555]"
+        />
+
+        {/* Right panel — clip workspace (resizable) */}
+        <div
+          className="flex shrink-0 flex-col border-l border-border bg-surface"
+          style={{ width: panelWidth }}
+        >
           <div className="border-b border-border p-3">
             <button
               onClick={(e) => {
@@ -536,24 +644,133 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
             {clipError && (
               <p className="mt-2 text-center text-[12px] text-red-400">{clipError}</p>
             )}
+
+            {/* Pending / Exported tabs */}
+            <div className="mt-3 flex gap-1">
+              <button
+                onClick={(e) => {
+                  e.currentTarget.blur()
+                  setClipTab('pending')
+                }}
+                className={`flex-1 cursor-pointer rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                  clipTab === 'pending'
+                    ? 'bg-white text-black'
+                    : 'border border-[#333] text-[#888] hover:bg-[#1a1a1a] hover:text-white'
+                }`}
+              >
+                Pending ({pendingClips.length})
+              </button>
+              <button
+                onClick={(e) => {
+                  e.currentTarget.blur()
+                  setClipTab('exported')
+                }}
+                className={`flex-1 cursor-pointer rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                  clipTab === 'exported'
+                    ? 'bg-white text-black'
+                    : 'border border-[#333] text-[#888] hover:bg-[#1a1a1a] hover:text-white'
+                }`}
+              >
+                Exported ({exportedClips.length})
+              </button>
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-            {clips.length === 0 ? (
-              <p className="mt-6 text-center text-[12px] text-[#666]">No clips yet</p>
+            {clipTab === 'pending' ? (
+              pendingClips.length === 0 ? (
+                <p className="mt-6 text-center text-[12px] text-[#666]">
+                  No clips to export. Set in/out points, then click Add Clip.
+                </p>
+              ) : (
+                pendingClips.map((clip) => (
+                  <ClipCard
+                    key={clip.id}
+                    clip={clip}
+                    subfolders={subfolders}
+                    onPlay={playClip}
+                    onDelete={deleteClip}
+                    onToggleFolder={toggleClipFolder}
+                    onLabelChange={setClipLabel}
+                    onAddSubfolder={addSubfolderForClip}
+                  />
+                ))
+              )
+            ) : exportedClips.length === 0 ? (
+              <p className="mt-6 text-center text-[12px] text-[#666]">No exported clips yet.</p>
             ) : (
-              clips.map((clip) => (
-                <ClipCard
-                  key={clip.id}
-                  clip={clip}
-                  subfolders={subfolders}
-                  onPlay={playClip}
-                  onDelete={deleteClip}
-                  onToggleFolder={toggleClipFolder}
-                  onLabelChange={setClipLabel}
-                  onAddSubfolder={addSubfolderForClip}
-                />
-              ))
+              <>
+                {/* Selection toolbar */}
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] uppercase tracking-wide text-[#666]">
+                    {selectedCount > 0 ? `${selectedCount} selected` : `${exportedClips.length} clips`}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => {
+                        e.currentTarget.blur()
+                        toggleSelectAll()
+                      }}
+                      className="cursor-pointer rounded border border-[#444] px-2 py-0.5 text-[11px] text-white transition-colors hover:bg-[#1a1a1a]"
+                    >
+                      {allExportedSelected ? 'Clear' : 'Select all'}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.currentTarget.blur()
+                        openExport(exportedClips.filter((c) => selectedIds.has(c.id)))
+                      }}
+                      disabled={selectedCount === 0}
+                      className="cursor-pointer rounded bg-white px-2 py-0.5 text-[11px] font-medium text-black transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Re-export{selectedCount > 0 ? ` (${selectedCount})` : ''}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Collapsible episode groups */}
+                {exportedGroups.map(({ episode, items }) => {
+                  const open = expandedEpisodes.has(episode)
+                  return (
+                    <div key={episode} className="overflow-hidden rounded-md border border-border">
+                      <button
+                        onClick={(e) => {
+                          e.currentTarget.blur()
+                          toggleEpisode(episode)
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[#1a1a1a]"
+                      >
+                        <ChevronRightIcon
+                          size={14}
+                          className={`shrink-0 text-[#888] ${open ? 'rotate-90' : ''}`}
+                        />
+                        <span className="truncate text-[12px] font-medium">{episode}</span>
+                        <span className="text-[11px] text-[#666]">({items.length})</span>
+                      </button>
+                      {open && (
+                        <div className="space-y-3 border-t border-border p-2">
+                          {items.map((clip) => (
+                            <ClipCard
+                              key={clip.id}
+                              clip={clip}
+                              subfolders={subfolders}
+                              onPlay={playClip}
+                              onDelete={deleteClip}
+                              onToggleFolder={toggleClipFolder}
+                              onLabelChange={setClipLabel}
+                              onAddSubfolder={addSubfolderForClip}
+                              exported
+                              selectable
+                              selected={selectedIds.has(clip.id)}
+                              onToggleSelect={toggleSelect}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </>
             )}
           </div>
         </div>
@@ -574,9 +791,11 @@ export default function Editor({ project, projectPath, setProject, onBack }) {
       {showExport && (
         <ExportPanel
           dramaName={project?.drama ?? 'Untitled'}
-          clips={clips}
+          clips={exportTargets}
+          allClips={clips}
           subfolders={subfolders}
           defaultOutputDir={projectPath}
+          width={panelWidth}
           onClose={() => setShowExport(false)}
           onExported={markExported}
         />

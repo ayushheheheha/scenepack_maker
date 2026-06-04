@@ -57,6 +57,10 @@ export default function ClipCard({
   onToggleFolder,
   onLabelChange,
   onAddSubfolder,
+  exported = false,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
 }) {
   const [label, setLabel] = useState(clip.label || '')
   const [adding, setAdding] = useState(false)
@@ -71,7 +75,11 @@ export default function ClipCard({
   }
 
   return (
-    <div className="group relative rounded-md border border-border bg-bg p-2">
+    <div
+      className={`group relative rounded-md border bg-bg p-2 ${
+        selected ? 'border-white/40' : 'border-border'
+      }`}
+    >
       {/* Actions (hover) */}
       <div className="absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
         <button
@@ -98,9 +106,25 @@ export default function ClipCard({
 
       {/* Thumbnail + info */}
       <div className="flex gap-2">
+        {selectable && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect?.(clip.id)}
+            aria-label="Select clip for re-export"
+            className="mt-1 h-4 w-4 shrink-0 cursor-pointer self-start accent-white"
+          />
+        )}
         <ClipThumbnail sourcePath={clip.sourcePath} inTime={clip.in} />
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-medium tabular-nums">{formatMMSS(duration)}</p>
+          <p className="flex items-center gap-1.5 text-[13px] font-medium tabular-nums">
+            {formatMMSS(duration)}
+            {exported && (
+              <span className="rounded bg-green-500/15 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-green-400">
+                Exported
+              </span>
+            )}
+          </p>
           <p className="mt-0.5 truncate text-[11px] text-[#666] tabular-nums">
             {clip.episode || 'episode'} &nbsp;{formatMMSS(clip.in)} → {formatMMSS(clip.out)}
           </p>

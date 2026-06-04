@@ -57,7 +57,7 @@ function runFfmpeg(src, inT, outT, outputPath, reencode) {
  * @returns {Promise<{success:boolean, errors:string[], exportedIds:string[], done:number, total:number}>}
  */
 async function runExport(payload, onProgress) {
-  const { clips = [], subfolders = [], outputDir, dramaName } = payload
+  const { clips = [], subfolders = [], outputDir, dramaName, exportIds } = payload
   const errors = []
   const exportedIds = new Set()
   const tasks = []
@@ -65,6 +65,12 @@ async function runExport(payload, onProgress) {
   if (!outputDir) {
     return { success: false, errors: ['No output folder selected'], exportedIds: [], done: 0, total: 0 }
   }
+
+  // exportIds (when provided) limits which clips are actually cut. `clips` is
+  // still the FULL set so per-episode numbering matches a complete export —
+  // i.e. a clip keeps its canonical NNN index even if only some are cut now.
+  const targetSet = Array.isArray(exportIds) ? new Set(exportIds) : null
+  const isTarget = (clip) => targetSet === null || targetSet.has(clip.id)
 
   const dramaSeg = sanitizeSegment(dramaName, 'drama')
 
@@ -85,16 +91,20 @@ async function runExport(payload, onProgress) {
 
     const counters = {}
     for (const clip of inFolder) {
+      const target = isTarget(clip)
+      // Validity: only counts toward numbering if it would be exported in a
+      // full run. Errors are reported only for clips we were asked to export.
       if (!(clip.out > clip.in)) {
-        errors.push(`${clip.episode || 'clip'} (${sub}): in >= out — skipped`)
+        if (target) errors.push(`${clip.episode || 'clip'} (${sub}): in >= out — skipped`)
         continue
       }
       if (!clip.sourcePath || !(await fileExists(clip.sourcePath))) {
-        errors.push(`${clip.episode || 'clip'} (${sub}): source file not found — skipped`)
+        if (target) errors.push(`${clip.episode || 'clip'} (${sub}): source file not found — skipped`)
         continue
       }
       const ep = sanitizeSegment(clip.episode, 'clip')
       counters[ep] = (counters[ep] || 0) + 1
+      if (!target) continue // numbered, but not cut this run
       const filename = `${ep}_${String(counters[ep]).padStart(3, '0')}.mp4`
       tasks.push({ clip, outputPath: path.join(folderDir, filename), filename })
     }
