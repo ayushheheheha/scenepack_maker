@@ -1,6 +1,6 @@
 {
   "name": "scenepack-maker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "ScenePack Maker — desktop tool for clipping and organizing drama scene packs",
   "private": true,
   "main": "electron/main.js",
